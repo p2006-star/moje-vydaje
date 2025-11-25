@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Moje Výdaje a Příjmy</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+body { font-family:'Quicksand',sans-serif; background:#fff7f8; margin:0; padding:15px; }
+h1 { text-align:center; color:#f4a8c4; margin-bottom:10px; font-size:24px; }
+#balance { text-align:center; font-size:22px; font-weight:600; margin-bottom:15px; }
+.month-tabs { display:flex; overflow-x:auto; margin-bottom:15px; gap:5px; padding-bottom:5px; }
+.month-tab { flex:0 0 auto; padding:8px 12px; border-radius:12px; cursor:pointer; background:#f4a8c4; color:white; font-weight:600; transition:0.3s; white-space:nowrap; }
+.month-tab.active { background:#f49cae; }
+.container { max-width:500px; margin:auto; background:#fff; padding:20px; border-radius:20px; box-shadow:0 6px 15px rgba(0,0,0,0.1); }
+input, select, button { width:100%; padding:15px; margin-bottom:12px; border-radius:15px; border:1px solid #ddd; font-size:18px; }
+button { background:#fbc1cc; color:#fff; border:none; cursor:pointer; font-weight:600; transition:0.3s; }
+button:hover { background:#f49cae; }
+ul { list-style:none; padding:0; margin:0; max-height:250px; overflow-y:auto; }
+li { display:flex; justify-content:space-between; align-items:center; padding:12px; border-radius:15px; margin-bottom:10px; font-weight:500; box-shadow:0 2px 5px rgba(0,0,0,0.05); cursor:pointer; transition:0.2s; font-size:18px; }
+li:hover { opacity:0.7; }
+.expense { background:#ffe3e3; color:#a60000; }
+.income { background:#d3f9d8; color:#1a7f37; }
+.icon { margin-right:10px; font-size:22px; }
+canvas { margin-top:20px; display:block; margin-left:auto; margin-right:auto; }
+.hint { text-align:center; font-size:13px; color:#888; margin-top:5px; }
+#login { max-width:400px; margin:auto; padding:20px; background:#fff; border-radius:20px; box-shadow:0 6px 15px rgba(0,0,0,0.1); text-align:center; }
+</style>
+</head>
+<body>
+
+<h1>Moje Výdaje a Příjmy</h1>
+
+<div id="login">
+  <h3>Přihlášení</h3>
+  <input type="email" id="email" placeholder="Email"><br>
+  <input type="password" id="password" placeholder="Heslo"><br>
+  <button onclick="login()">Přihlásit</button>
+  <button onclick="signup()">Registrovat</button>
+  <p id="loginMessage" style="color:red;"></p>
+</div>
+
+<div id="app" style="display:none;">
+  <div id="balance">Zůstatek: 0 Kč</div>
+  <div class="month-tabs" id="monthTabs"></div>
+  <div class="container">
+    <input type="number" id="amount" placeholder="Částka">
+    <select id="type" onchange="updateCategoryOptions()">
+      <option value="expense">Výdaj</option>
+      <option value="income">Příjem</option>
+    </select>
+    <select id="category"></select>
+    <button onclick="addTransaction()">Přidat</button>
+    <ul id="transactionsList"></ul>
+    <div class="hint">Kliknutím na položku ji smažeš</div>
+    <canvas id="chart" width="400" height="400"></canvas>
+  </div>
+  <button onclick="logout()" style="margin-top:10px;">Odhlásit</button>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+// --- Firebase config ---
+const firebaseConfig = {
+  apiKey: "AIzaSyDslBZIU83ubnVCN-j1fGLBHyIzEvNdxL8",
+  authDomain: "mojevydaje.firebaseapp.com",
+  databaseURL: "https://mojevydaje-default-rtdb.firebaseio.com",
+  projectId: "mojevydaje",
+  storageBucket: "mojevydaje.firebasestorage.app",
+  messagingSenderId: "834172559096",
+  appId: "1:834172559096:web:badbad93b3db25548f650d",
+  measurementId: "G-1RSLR57NKS" 
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.database();
+
+// --- Kategorie ---
+const expenseCategories=[{name:"Jídlo",icon:"🍔"},{name:"Doprava",icon:"🚗"},{name:"Zábava",icon:"🎮"},{name:"Bydlení",icon:"🏠"},{name:"Oblečení",icon:"👗"},{name:"Zdraví",icon:"💊"},{name:"Škola/Práce",icon:"📚"},{name:"Ostatní",icon:"✨"}];
+const incomeCategories=[{name:"Práce",icon:"💼"},{name:"Doplňkový příjem",icon:"💰"},{name:"Prodej",icon:"🛒"},{name:"Dárky",icon:"🎁"},{name:"Ostatní",icon:"✨"}];
+
+let currentUser=null;
+let currentMonth=new Date().toISOString().slice(0,7);
+
+// --- Přihlášení a registrace ---
+function login(){
+  const email=document.getElementById("email").value;
+  const password=document.getElementById("password").value;
+  auth.signInWithEmailAndPassword(email,password)
+    .then(user=>{currentUser=user.user; initApp();})
+    .catch(e=>document.getElementById("loginMessage").textContent=e.message);
+}
+function signup(){
+  const email=document.getElementById("email").value;
+  const password=document.getElementById("password").value;
+  auth.createUserWithEmailAndPassword(email,password)
+    .then(user=>{currentUser=user.user; initApp();})
+    .catch(e=>document.getElementById("loginMessage").textContent=e.message);
+}
+function logout(){ auth.signOut().then(()=>{currentUser=null; document.getElementById("app").style.display="none"; document.getElementById("login").style.display="block"; }); }
+
+// --- Aplikace ---
+const balanceEl=document.getElementById("balance");
+const transactionsList=document.getElementById("transactionsList");
+const amountInput=document.getElementById("amount");
+const typeSelect=document.getElementById("type");
+const categorySelect=document.getElementById("category");
+const chartCanvas=document.getElementById("chart");
+const monthTabsEl=document.getElementById("monthTabs");
+
+function updateCategoryOptions(){
+  const categories=typeSelect.value==="expense"?expenseCategories:incomeCategories;
+  categorySelect.innerHTML="";
+  categories.forEach(c=>{ const opt=document.createElement("option"); opt.value=c.name; opt.text=`${c.icon} ${c.name}`; categorySelect.appendChild(opt); });
+}
+
+// --- Firebase CRUD ---
+function addTransaction(){
+  const amount=parseFloat(amountInput.value);
+  if(!amount) return;
+  const selectedOption=categorySelect.options[categorySelect.selectedIndex];
+  const icon=selectedOption.text.split(" ")[0];
+  const categoryName=categorySelect.value;
+  const id=Date.now();
+  db.ref(`users/${currentUser.uid}/${currentMonth}/${id}`).set({id,amount,type:typeSelect.value,category:categoryName,icon});
+  amountInput.value="";
+}
+
+function fetchTransactions(){ 
+  db.ref(`users/${currentUser.uid}/${currentMonth}`).on("value",snap=>{ renderTransactions(snap.val()); }); 
+}
+
+function renderTransactions(data){
+  transactionsList.innerHTML="";
+  if(!data) data={};
+  let total=0;
+  Object.values(data).forEach(t=>{
+    const li=document.createElement("li");
+    li.className=t.type==="expense"?"expense":"income";
+    li.innerHTML=`<span><span class="icon">${t.icon}</span>${t.category}</span><span>${t.type==="expense"?'-':'+'} ${t.amount} Kč</span>`;
+    li.onclick=()=>{ if(confirm(`Chceš smazat položku: ${t.category} ${t.amount} Kč?`)) db.ref(`users/${currentUser.uid}/${currentMonth}/${t.id}`).remove(); };
+    transactionsList.appendChild(li);
+    total += t.type==="income"?t.amount:-t.amount;
+  });
+  balanceEl.textContent=`Zůstatek: ${total} Kč`;
+  balanceEl.style.color=total>=0?"green":"red";
+  renderChart(data);
+}
+
+function renderChart(data){
+  const allCategories=expenseCategories.concat(incomeCategories).map(c=>c.name);
+  const chartData=allCategories.map(cat=>{
+    let sum=0;
+    if(data) Object.values(data).forEach(t=>{ if(t.category===cat) sum+=(t.type==="income"?t.amount:-t.amount); });
+    return sum;
+  });
+  const colors=expenseCategories.map(()=>"#fcb1b1").concat(incomeCategories.map(()=>"#d3f9d8"));
+  if(window.myChart) window.myChart.destroy();
+  window.myChart=new Chart(chartCanvas,{type:"bar",data:{labels:allCategories,datasets:[{label:"Příjmy a výdaje",data:chartData,backgroundColor:colors}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
+}
+
+// --- Měsíce ---
+const months=[];
+const now=new Date();
+for(let i=0;i<12;i++){
+  const d=new Date(now.getFullYear(),i,1);
+  const m=d.toISOString().slice(0,7);
+  months.push(m);
+  const btn=document.createElement("div");
+  btn.className="month-tab"+(m===currentMonth?" active":"");
+  btn.textContent=d.toLocaleString("cs-CZ",{month:"long"});
+  btn.onclick=()=>{ currentMonth=m; document.querySelectorAll(".month-tab").forEach(b=>b.classList.remove("active")); btn.classList.add("active"); fetchTransactions(); };
+  monthTabsEl.appendChild(btn);
+}
+
+function initApp(){
+  document.getElementById("login").style.display="none";
+  document.getElementById("app").style.display="block";
+  updateCategoryOptions();
+  fetchTransactions();
+}
+</script>
+</body>
+</html>
